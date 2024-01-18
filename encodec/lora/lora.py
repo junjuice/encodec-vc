@@ -1,9 +1,7 @@
-from typing import Iterator, Mapping
 import torch
-import torch.nn.functional as F
 from torch import nn
 
-from encodec.modules.seanet import SEANetDecoder, SEANetEncoder, SEANetResnetBlock
+from encodec.modules.seanet import SEANetResnetBlock
 from encodec.modules.conv import SConv1d
 from encodec.model import EncodecModel
 
@@ -11,6 +9,24 @@ from m2d.m2d.runtime_audio import RuntimeM2D
 
 from enum import Enum
 
+import requests
+import tqdm
+import os
+
+
+def download(url: str, fname: str, chunk_size=1024):
+    resp = requests.get(url, stream=True)
+    total = int(resp.headers.get('content-length', 0))
+    with open(fname, 'wb') as file, tqdm.tqdm(
+        desc=fname,
+        total=total,
+        unit='iB',
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as bar:
+        for data in resp.iter_content(chunk_size=chunk_size):
+            size = file.write(data)
+            bar.update(size)
 
 class ZeroModule(nn.Module):
 
@@ -110,6 +126,8 @@ class EncodecLoRA(nn.Module):
 class SpeakerEncoder(nn.Module):
     def __init__(self, m2d_path="m2d_vit_base-80x608p16x16-221006-mr6/pruned.pth"):
         super().__init__()
+        if not os.path.isfile(m2d_path):
+            download("https://huggingface.co/junjuice0/test/resolve/main/pruned.pth", m2d_path)
         self.m2d = RuntimeM2D(weight_file=m2d_path, encoder_only=True).eval().requires_grad_(False)
         self.lstm = nn.LSTM(input_size=self.m2d.cfg.feature_d, hidden_size=1024, num_layers=4, batch_first=True)
         self.state_dict = self.lstm.state_dict
