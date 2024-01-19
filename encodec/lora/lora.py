@@ -129,7 +129,7 @@ class SpeakerEncoder(nn.Module):
         if not os.path.isfile(m2d_path):
             download("https://huggingface.co/junjuice0/test/resolve/main/pruned.pth", m2d_path)
         self.m2d = RuntimeM2D(weight_file=m2d_path, encoder_only=True).eval().requires_grad_(False)
-        self.lstm = nn.LSTM(input_size=self.m2d.cfg.feature_d, hidden_size=1024, num_layers=4, batch_first=True)
+        self.lstm = nn.LSTM(input_size=self.m2d.cfg.feature_d, hidden_size=1024, num_layers=2, batch_first=True)
         self.state_dict = self.lstm.state_dict
         self.summarize()
 
@@ -171,4 +171,9 @@ class SpeakerEncoder(nn.Module):
     
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
         self.lstm = self.lstm._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
+        return self
+
+    def to(self, device):
+        self.lstm.to(device)
+        self.m2d.to(device)
         return self

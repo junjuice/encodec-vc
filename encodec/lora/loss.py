@@ -104,5 +104,3 @@ class GE2ELoss(nn.Module):
         cos_sim_matrix = cos_sim_matrix * self.w + self.b
         L = self.embed_loss(dvecs, cos_sim_matrix)
         return L.sum()
-
-        
