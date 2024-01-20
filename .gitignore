@@ -53,3 +53,4 @@ ENV/
 cache/
 datasets/
 *.pth
+logs/

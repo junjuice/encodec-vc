@@ -36,7 +36,7 @@ def read_csv(path):
 
 
 class JVS(Dataset):
-    def __init__(self, batch_size: int, dir="./datasets", size=1e5, length=3, sr=24000, uttr_per_batch=None, random_length=False):
+    def __init__(self, batch_size: int=None, dir="./datasets", size=1e5, length=3, sr=24000, uttr_per_batch=None, random_length=False):
         dir = dir.removesuffix("/")
         self.batch_size = batch_size
         self.size = int(size)
@@ -47,6 +47,7 @@ class JVS(Dataset):
         self.uttr_per_batch = uttr_per_batch if uttr_per_batch else batch_size
         self.random_length = random_length
         self.get_history = [None]
+        self.speaker_batch = True if batch_size else False
         if not os.path.isfile(dir+"/JVS/jvs_ver1/README.txt"):
             os.makedirs(dir+"/JVS", exist_ok=True)
             download("https://huggingface.co/junjuice0/test/resolve/main/jvs_ver1.zip", fname=dir+"/JVS/data.zip")
@@ -69,6 +70,19 @@ class JVS(Dataset):
         L = int(x.shape[0])
         start = random.randint(0, L - steps - 1)
         return x[start:start+steps]
+    
+    def get_speaker_and_idx(self, idx):
+        speaker = 0
+        new_idx = idx
+        while True:
+           new_idx -= len(self.datas[speaker])
+           if new_idx < 0:
+               break
+           speaker += 1
+           idx = new_idx
+           if speaker == len(self.datas):
+               speaker = 0
+        return speaker, idx
 
     def __len__(self):
         return self.size
@@ -78,7 +92,7 @@ class JVS(Dataset):
         wave = self.transform(wave, sr)
         return wave
 
-    def __getitem__(self, idx):
+    def get_speaker_batch(self, idx):
         x = []
         speaker = None
         while speaker in self.get_history:
@@ -92,4 +106,12 @@ class JVS(Dataset):
             self.get_history = [None]
             if self.random_length:
                 self.length = random.random() * (self.max_length - self.min_length) + self.min_length
+        return x
+    
+    def get_normal(self, idx):
+        x = self.get_wave(*self.get_speaker_and_idx(idx))
+        return x
+    
+    def __getitem__(self, index):
+        x = self.get_speaker_batch(index) if self.speaker_batch else self.get_normal(index)
         return x

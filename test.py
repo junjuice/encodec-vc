@@ -1,12 +1,18 @@
-from encodec.model import EncodecModel
-from encodec.lora.lora import EncodecLoRA
-import torchaudio
+
 import torch
+from torch.autograd.grad_mode import no_grad
+from torch.utils.data import DataLoader
+import tqdm
+from data.custom import CustomDataset
+from encodec.lora.lora import SpeakerEncoder
 
-torch.hub.set_dir("./cache")
-model = EncodecModel.encodec_model_24khz()
-lora = EncodecLoRA(model, 8, 5, strength=0.5, trainable_zero=True)
-
-wave, sr = torchaudio.load("test.wav")
-out = model(wave.unsqueeze(1))
-torchaudio.save("test_out.wav", src=out[0].detach(), sample_rate=sr)
+with no_grad():
+    embedder = SpeakerEncoder(pretrained_path="./speaker_encoder.pth")
+    ds = CustomDataset("./datasets/JVS/jvs_ver1/jvs001/parallel100/wav24kHz16bit")
+    dl = DataLoader(ds, 4)
+    embs = []
+    for data in tqdm.tqdm(dl):
+        embs.append(embedder(data))
+    embs = torch.cat(embs, dim=0)
+    print(embs.std(dim=-1))
+    torch.save(embs, "test_emb.pt")

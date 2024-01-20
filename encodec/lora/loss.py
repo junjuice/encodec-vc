@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from encodec.lora.lora import SpeakerEncoder
+from encodec.msstftd import MultiScaleSTFTDiscriminator
+
 #From https://github.com/cvqluu/GE2E-Loss
 
 class GE2ELoss(nn.Module):
@@ -104,3 +107,37 @@ class GE2ELoss(nn.Module):
         cos_sim_matrix = cos_sim_matrix * self.w + self.b
         L = self.embed_loss(dvecs, cos_sim_matrix)
         return L.sum()
+
+
+class SpeakerEncoderLoss(nn.Module):
+    def __init__(self, encoder: SpeakerEncoder, embedding: torch.Tensor):
+        super().__init__()
+        self.encoder = encoder.eval()
+        self.embedding = embedding
+        self.target = self.embedding[None, :]
+
+    def forward(self, x: torch.Tensor):
+        embedding = self.encoder(x)
+        if self.target.shape[0] != embedding.shape[0]:
+            self.target = torch.tile(self.embedding, (embedding.shape[0], 1))
+        similarity = torch.cosine_similarity(embedding, self.target, dim=-1)
+        return 1 - similarity.mean()
+    
+class Discriminator(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.msfft = MultiScaleSTFTDiscriminator(filters=32)
+        self.relu = nn.ReLU()
+        self.device = "cpu"
+
+    def forward(self, x: torch.Tensor):
+        logits, fmap = self.msfft(x)
+        loss = torch.tensor([0.0], device=self.device, requires_grad=True)
+        for tt1 in range(len(fmap)):
+            loss = loss + (torch.mean(self.relu(1 - logits[tt1])) / len(logits))
+        return torch.tanh(loss)
+    
+    def to(self, device, *args, **kwargs):
+        self.device = device
+        super().to(device, *args, **kwargs)
+        return self

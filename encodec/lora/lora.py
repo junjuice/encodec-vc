@@ -124,12 +124,16 @@ class EncodecLoRA(nn.Module):
 
 
 class SpeakerEncoder(nn.Module):
-    def __init__(self, m2d_path="m2d_vit_base-80x608p16x16-221006-mr6/pruned.pth"):
+    def __init__(self, m2d_path="models/m2d_vit_base-80x608p16x16-221006-mr6/pruned.pth", pretrained_path=None, m2d_grad=False):
         super().__init__()
         if not os.path.isfile(m2d_path):
             download("https://huggingface.co/junjuice0/test/resolve/main/pruned.pth", m2d_path)
-        self.m2d = RuntimeM2D(weight_file=m2d_path, encoder_only=True).eval().requires_grad_(False)
+        self.m2d = RuntimeM2D(weight_file=m2d_path, encoder_only=True).eval().requires_grad_(m2d_grad)
         self.lstm = nn.LSTM(input_size=self.m2d.cfg.feature_d, hidden_size=1024, num_layers=2, batch_first=True)
+        if pretrained_path:
+            if not os.path.isfile(pretrained_path):
+                download("https://huggingface.co/junjuice0/test/resolve/main/speaker_encoder.pth", pretrained_path)
+            self.load_state_dict(torch.load(pretrained_path))
         self.state_dict = self.lstm.state_dict
         self.summarize()
 
@@ -166,8 +170,7 @@ class SpeakerEncoder(nn.Module):
         return self.lstm.parameters(recurse=recurse)
     
     def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
-        self.lstm = self.lstm.load_state_dict(state_dict=state_dict, strict=strict, assign=assign)
-        return self
+        self.lstm.load_state_dict(state_dict=state_dict, strict=strict, assign=assign)
     
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
         self.lstm = self.lstm._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
