@@ -17,7 +17,7 @@ from encodec.msstftd import MultiScaleSTFTDiscriminator
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.hub.set_dir("./cache")
-n_workers = 2 #cpu_count()
+n_workers = cpu_count()
 
 
 def train_speaker_encoder():
@@ -69,11 +69,11 @@ def train_speaker_encoder():
 
 @torch.no_grad()
 def get_embedding():
-    batch_size = 4
-    epoch = 10
-    path = "./embeddings/test.pt"
-    path_all = "./embeddings/test_all.pt"
-    target_dir = "./ange"
+    batch_size = 8
+    epoch = 1
+    path = "./embeddings/ange.pt"
+    path_all = "./embeddings/ange_all.pt"
+    target_dir = "C:/Users/Administrator/Downloads/ange"
 
     speaker_encoder = SpeakerEncoder(pretrained_path="./models/speaker_encoder/speaker_encoder.pth")
     target_dataset = CustomDataset(target_dir)
@@ -95,56 +95,56 @@ def get_embedding():
 def train_lora():
     rank = 16
     kernel_size = 11
-    batch_size = 16
+    batch_size = 4
     epoch = 10
     checkpoint_step = 100
-    target_embedding_path = "./embeddings/test.pt"
-    target_dataset_path = "./ange"
+    target_embedding_path = "./embeddings/ange.pt"
+    target_dataset_path = "./datasets/ange"
 
     dataset = JVS()
-    dataloader = DataLoader(dataset, batch_size, num_workers=n_workers, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size//2, num_workers=n_workers//2, shuffle=True)
     
-    target_dataset = CustomDataset(target_dataset_path)
-    target_dataloader = DataLoader(target_dataset, batch_size, num_workers=n_workers, shuffle=True)
+    target_dataset = CustomDataset(target_dataset_path, size=len(dataset))
+    target_dataloader = DataLoader(target_dataset, batch_size//2, num_workers=n_workers//2, shuffle=True)
 
     embedding = torch.load(target_embedding_path)
     speaker_encoder = SpeakerEncoder(pretrained_path="./models/speaker_encoder/speaker_encoder.pth", m2d_grad=True).to(device)
-    criterion1 = SpeakerEncoderLoss(speaker_encoder, embedding).to(device).eval()
-    criterion2 = Discriminator().to(device)
-    criterion3 = MSELoss()
-    model = EncodecModel.encodec_model_24khz().to(device).eval()
+    criterion1 = SpeakerEncoderLoss(speaker_encoder, embedding).to(device)
+    criterion2 = MSELoss()
+    model = EncodecModel.encodec_model_24khz().to(device)
     lora = EncodecLoRA(model, rank=rank, kernel_size=kernel_size).to(device)
-    optimizer1 = optim.AdamW(lora.parameters(), lr=1e-4)
-    optimizer2 = optim.AdamW(criterion2.parameters(), lr=1e-3)
+    optimizer = optim.AdamW(lora.parameters(), lr=1e-4)
 
     global_step = 0
     losses = []
 
     for i in range(epoch):
-        criterion1.train()
-        model.train()
+        criterion1.eval()
+        model.eval()
         lora.train()
 
-        bar = tqdm.tqdm(dataloader, desc="EPOCH {}".format(i))
-        for data in bar:
-            data = data.to(device)
-            if len(data.shape) == 2:
-                data = data[:, None, :]
-
-            g_output = model(data)
-            loss_d = criterion2(data) + (1 - criterion2(g_output))
-            criterion2.zero_grad()
-            loss_d.backward()
-            optimizer2.step()
+        bar = tqdm.tqdm(zip(dataloader, target_dataloader), desc="EPOCH {}".format(i), total=len(dataloader))
+        for data1, data2 in bar:
             
-            g_output = model(data)
-            loss_g = criterion1(g_output) * 3 + criterion2(g_output)
-            lora.zero_grad()
-            loss_g.backward()
-            optimizer1.step()
+            data1 = data1.to(device)
+            if len(data1.shape) == 2:
+                data1 = data1[:, None, :]
+                
+            data2 = data2.to(device)
+            if len(data2.shape) == 2:
+                data2 = data2[:, None, :]
 
-            losses.append(loss_g)
-            bar.set_postfix({"disc_loss": float(loss_d), "lora_loss": float(loss_g)})
+            output1 = model(data1)
+            output2 = model(data2)
+            encoder_loss = criterion1(output1)
+            mse_loss = criterion2(output2, data2) * 100
+            loss = encoder_loss + mse_loss
+            lora.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            losses.append(loss)
+            bar.set_postfix({"total_loss": float(loss), "encoder_loss": float(encoder_loss), "mse_loss": float(mse_loss)})
             global_step += 1
             if global_step % checkpoint_step == 0:
                 makedirs("./logs/{:0>8}/wav/".format(global_step), exist_ok=True)
@@ -152,42 +152,8 @@ def train_lora():
                 torch.save(criterion2.state_dict(), "./logs/{:0>8}/checkpoints/discriminator.pth".format(global_step))
                 torch.save(lora.state_dict(), "./logs/{:0>8}/checkpoints/lora.pth".format(global_step))
                 for j in range(batch_size):
-                    torchaudio.save("./logs/{:0>8}/wav/{}_original.wav".format(global_step, j), data[j].detach(), dataset.sr)
-                    torchaudio.save("./logs/{:0>8}/wav/{}_output.wav".format(global_step, j), g_output[j].detach(), dataset.sr)
-                bar.write("===========================================================================")
-                bar.write("STEP "+ str(global_step))
-                bar.write("LOSS "+ str(float(torch.stack(losses).mean())))
-                losses = []
-
-
-        bar = tqdm.tqdm(target_dataloader, desc="EPOCH {}".format(i))
-        for data in bar:
-            data = data.to(device)
-            if len(data.shape) == 2:
-                data = data[:, None, :]
-
-            g_output = model(data)
-
-            loss_d = criterion2(data) + (1 - criterion2(g_output))
-            criterion2.zero_grad()
-            loss_d.backward()
-            optimizer2.step()
-            
-            loss_g = criterion3(data, data)
-            lora.zero_grad()
-            loss_g.backward()
-            optimizer1.step()
-
-            bar.set_postfix({"disc_loss": float(loss_d), "lora_loss": float(loss_g)})
-            global_step += 1
-            if global_step % checkpoint_step == 0:
-                makedirs("./logs/{:0>8}/wav/".format(global_step), exist_ok=True)
-                makedirs("./logs/{:0>8}/checkpoints/".format(global_step), exist_ok=True)
-                torch.save(criterion2.state_dict(), "./logs/{:0>8}/checkpoints/discriminator.pth".format(global_step))
-                torch.save(lora.state_dict(), "./logs/{:0>8}/checkpoints/lora.pth".format(global_step))
-                for j in range(batch_size):
-                    torchaudio.save("./logs/{:0>8}/wav/{}_original.wav".format(global_step, j), data[j].detach(), dataset.sr)
-                    torchaudio.save("./logs/{:0>8}/wav/{}_output.wav".format(global_step, j), g_output[j].detach(), dataset.sr)
+                    torchaudio.save("./logs/{:0>8}/wav/{}_original.wav".format(global_step, j), data1[j].detach(), dataset.sr)
+                    torchaudio.save("./logs/{:0>8}/wav/{}_output.wav".format(global_step, j), output1[j].detach(), dataset.sr)
                 bar.write("===========================================================================")
                 bar.write("STEP "+ str(global_step))
                 bar.write("LOSS "+ str(float(torch.stack(losses).mean())))
