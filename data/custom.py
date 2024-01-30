@@ -31,6 +31,7 @@ class CustomDataset(Dataset):
         self.sr = sr
         self.datas = glob.glob(dir+"/*.wav")
         self.size = size if size else len(self.datas)
+        print("Custom dataset: {} files found".format(len(self.datas)))
 
     def transform(self, x: torch.Tensor, sr: int):
         if sr != self.sr:
