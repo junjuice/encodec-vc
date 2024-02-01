@@ -2,6 +2,8 @@ from math import sqrt
 from os import cpu_count, makedirs
 import os
 import sys
+import logging
+import torio
 from torch import nn, optim
 import torch
 from torch.nn.modules.loss import MSELoss
@@ -10,8 +12,6 @@ import torchaudio
 import tqdm
 from data.custom import CustomDataset
 from data.jvs import JVS
-from encodec.lora.lora import EncodecLoRA, SpeakerEncoder
-from encodec.lora.loss import Discriminator, GE2ELoss, SpeakerEncoderLoss
 from encodec.model import EncodecModel
 from encodec.msstftd import MultiScaleSTFTDiscriminator
 from audio_to_mel import Audio2Mel
@@ -19,7 +19,6 @@ from audio_to_mel import Audio2Mel
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.hub.set_dir("./cache")
 n_workers = cpu_count()
-
 
 def total_loss(fmap_real, logits_fake, fmap_fake, wav1, wav2, sample_rate=24000):
     relu = torch.nn.ReLU()
@@ -60,7 +59,7 @@ def disc_loss(logits_real, logits_fake):
     lossd = lossd / len(logits_real)
     return lossd
 
-
+'''
 def train_speaker_encoder():
     b = 4
     batch_size = int(sqrt(b))
@@ -131,20 +130,20 @@ def get_embedding():
     torch.save(embeddings, path_all)
     torch.save(embeddings.mean(0), path)
     print("Saved", path, "and", path_all)
-
+'''
 
 def train_lora():
     rank = 16
     kernel_size = 23
-    batch_size = 8
+    batch_size = 4
     epoch = 10
     warmup = 50
     checkpoint_step = 100
     target_embedding_path = "./embeddings/ange.pt"
     target_dataset_path = "./datasets/ange"
-    logdir = "/content/gdrive/MyDrive/encodec_lora"
+    logdir = "./logs"
 
-    dataset = JVS()
+    dataset = JVS(sr=16000, mode="denoise")
     dataloader = DataLoader(dataset, batch_size//2, num_workers=n_workers//2, shuffle=True)
 
     discriminator1 = MultiScaleSTFTDiscriminator(filters=32).to(device)
@@ -162,7 +161,7 @@ def train_lora():
         train_d = False
 
         bar = tqdm.tqdm(dataloader, desc="EPOCH {}".format(i), total=len(dataloader))
-        for data1 in bar:
+        for target, data1 in bar:
             train_d = not train_d
 
             optimizer.zero_grad()
@@ -173,7 +172,11 @@ def train_lora():
             if len(data1.shape) == 2:
                 data1 = data1[:, None, :]
 
-            logits_real_1, fmap_real_1 = discriminator1(data1)
+            target = target.to(device)
+            if len(target.shape) == 2:
+                target = target[:, None, :]
+
+            logits_real_1, fmap_real_1 = discriminator1(target)
             if train_d:
                 logits_fake_1, _ = discriminator1(model(data1).detach())
                 loss = disc_loss(logits_real_1, logits_fake_1)
@@ -199,7 +202,8 @@ def train_lora():
                 makedirs(logdir+"/logs/{:0>8}/checkpoints/".format(global_step), exist_ok=True)
                 torch.save(model.state_dict(), logdir+"/logs/{:0>8}/checkpoints/model.pth".format(global_step))
                 for j in range(batch_size//2):
-                    torchaudio.save(logdir+"/logs/{:0>8}/wav/vc_{}_original.wav".format(global_step, j), data1[j].detach().cpu(), dataset.sr)
+                    torchaudio.save(logdir+"/logs/{:0>8}/wav/vc_{}_original.wav".format(global_step, j), target[j].detach().cpu(), dataset.sr)
+                    torchaudio.save(logdir+"/logs/{:0>8}/wav/vc_{}_noise.wav".format(global_step, j), data1[j].detach().cpu(), dataset.sr)
                     torchaudio.save(logdir+"/logs/{:0>8}/wav/vc_{}_output.wav".format(global_step, j), output1[j].detach().cpu(), dataset.sr)
 
                 bar.write("===========================================================================")
@@ -209,15 +213,15 @@ def train_lora():
 
         
 def main():
-    mode = sys.argv[1]
-    if mode == "se":
-        train_speaker_encoder()
-    elif mode == "emb":
-        get_embedding()
-    elif mode == "lora":
-        train_lora()
-    else:
-        raise NotImplementedError
+    #mode = sys.argv[1]
+    #if mode == "se":
+    #    train_speaker_encoder()
+    #elif mode == "emb":
+    #    get_embedding()
+    #elif mode == "lora":
+    train_lora()
+    #else:
+    #    raise NotImplementedError
     
 
 if __name__ == "__main__":

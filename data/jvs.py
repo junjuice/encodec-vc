@@ -36,18 +36,20 @@ def read_csv(path):
 
 
 class JVS(Dataset):
-    def __init__(self, batch_size: int=None, dir="./datasets", size=1e5, length=3, sr=24000, uttr_per_batch=None, random_length=False):
+    def __init__(self, batch_size: int=None, dir="./datasets", size=1e5, length=3, sr=24000, uttr_per_batch=None, random_length=False, mode="normal"):
         dir = dir.removesuffix("/")
+        assert mode in ["normal", "speaker_encoder", "denoise"], NotImplementedError
+        self.mode = mode
         self.batch_size = batch_size
         self.size = int(size)
         self.length = length
         self.max_length = length
         self.min_length = 1
         self.sr = sr
+        self.resamp = None
         self.uttr_per_batch = uttr_per_batch if uttr_per_batch else batch_size
         self.random_length = random_length
         self.get_history = [None]
-        self.speaker_batch = True if batch_size else False
         if not os.path.isfile(dir+"/JVS/jvs_ver1/README.txt"):
             os.makedirs(dir+"/JVS", exist_ok=True)
             download("https://huggingface.co/junjuice0/test/resolve/main/jvs_ver1.zip", fname=dir+"/JVS/data.zip")
@@ -57,10 +59,19 @@ class JVS(Dataset):
         for i in range(1, 101):
             self.datas.append(glob.glob(self.path+"jvs{:0>3}/parallel100/wav24kHz16bit/*.wav".format(i))
                               +glob.glob(self.path+"jvs{:0>3}/nonpara30/wav24kHz16bit/*.wav".format(i)))
+        if self.mode == "denoise":
+            effect = ",".join(
+                [
+                    "aecho=in_gain=0.8:out_gain=0.9:delays=200:decays=0.3|delays=400:decays=0.3"
+                ],
+            )
+            self.noise = torchaudio.io.AudioEffector(effect=effect)
         
     def transform(self, x: torch.Tensor, sr: int):
         if sr != self.sr:
-            x = torchaudio.transforms.Resample(sr, self,sr)(x)
+            if self.resamp is None:
+                self.resamp = torchaudio.transforms.Resample(sr, self.sr)
+            x = self.resamp(x)
         if len(x.shape) == 2:
             x = x[0]
         steps = int(self.length * self.sr)
@@ -92,7 +103,7 @@ class JVS(Dataset):
         wave = self.transform(wave, sr)
         return wave
 
-    def get_speaker_batch(self, idx):
+    def get_speaker_encoder(self, idx):
         x = []
         speaker = None
         while speaker in self.get_history:
@@ -108,10 +119,20 @@ class JVS(Dataset):
                 self.length = random.random() * (self.max_length - self.min_length) + self.min_length
         return x
     
+    def get_denoise(self, idx):
+        x = self.get_normal(idx)
+        y = self.noise.apply(x[None], sample_rate=self.sr)
+        return x, y
+
     def get_normal(self, idx):
         x = self.get_wave(*self.get_speaker_and_idx(idx))
         return x
     
-    def __getitem__(self, index):
-        x = self.get_speaker_batch(index) if self.speaker_batch else self.get_normal(index)
+    def __getitem__(self, idx):
+        if self.mode == "normal":
+            x = self.get_normal(idx)
+        elif self.mode == "speaker_encoder":
+            x = self.get_speaker_encoder(idx)
+        elif self.mode == "denoise":
+            x = self.get_denoise(idx)
         return x
