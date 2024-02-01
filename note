@@ -1,0 +1,1 @@
+conda install portaudio pysoundfile ffmpeg -c conda-forge
