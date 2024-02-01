@@ -120,8 +120,10 @@ class JVS(Dataset):
         return x
     
     def get_denoise(self, idx):
-        x = self.get_normal(idx)
-        y = self.noise.apply(x[None], sample_rate=self.sr)
+        x = self.get_normal(idx).squeeze().unsqueeze(-1)
+        y = self.noise.apply(x, sample_rate=self.sr)
+        x, y = x.transpose(0, 1), y.transpose(0, 1)
+        x = torch.nn.functional.pad(x, (0, (y.shape[-1]-x.shape[-1])), value=0)
         return x, y
 
     def get_normal(self, idx):
