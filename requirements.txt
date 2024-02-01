@@ -15,4 +15,3 @@ transformers
 einops
 easydict
 torchlibrosa
-parallel-wavegan
