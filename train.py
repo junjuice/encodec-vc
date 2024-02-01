@@ -168,6 +168,7 @@ def train_lora():
     global_step = 0
     last_d_loss_1 = 0
     losses = []
+    mse = torch.nn.MSELoss()
 
     for i in range(epoch):
         model.train()
@@ -193,9 +194,9 @@ def train_lora():
             logits_real_1, fmap_real_1 = discriminator1(target)
             if train_d:
                 logits_fake_1, _ = discriminator1(model(data1).detach())
-                loss = disc_loss(logits_real_1, logits_fake_1)
-                if loss > last_d_loss_1/2:
-                    loss.backward()
+                disc_loss = disc_loss(logits_real_1, logits_fake_1)
+                if disc_loss > last_d_loss_1/2:
+                    disc_loss.backward()
                     optimizer_d_1.step()
                 last_d_loss_1 = 0
 
@@ -208,7 +209,8 @@ def train_lora():
             optimizer.step()
 
             losses.append(loss)
-            bar.set_postfix({"total_loss": float(loss)})
+            mse_loss = mse(output1, target)
+            bar.set_postfix({"total_loss": float(loss), "disc_loss": float(disc_loss), "mse_loss": mse_loss})
             global_step += 1
 
             if global_step % checkpoint_step == 0:
